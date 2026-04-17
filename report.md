@@ -1,21 +1,34 @@
-**Stage 2 — L1稀疏多变量筛选**
+# Report
 
-对回归任务使用 **Elastic Net**（弹性网络正则化）：
+## 1. Introduction
+This section introduces the core concepts of our research. We describe the primary objectives and the outcomes we aim to achieve by conducting this study.
 
-$$
-\hat{\boldsymbol{\beta}} = \arg\min_{\boldsymbol{\beta}} \left\{ \frac{1}{2n}\lVert\mathbf{y} - \mathbf{X}\boldsymbol{\beta}\rVert_2^2 + \lambda\left[\alpha\lVert\boldsymbol{\beta}\rVert_1 + \frac{1-\alpha}{2}\lVert\boldsymbol{\beta}\rVert_2^2\right] \right\}
-$$
+## 2. Methodology
+This section details the methods used in our research, including experimental setups and data collection methods.
 
-其中 $\lambda$ 为正则化强度，$\alpha\in[0,1]$ 控制L1与L2混合比（通过交叉验证自动选择 $\alpha^* = 0.10$，$\lambda^* = 15.06$）。
+## 3. Results
+We present the results of our experiments, including relevant tables, figures, and data visualizations.
 
-对分类任务使用 **L1正则化Logistic回归**（Lasso Logistic）：
+### Table 1: Sample Results
+| Sample | Value |
+|--------|-------|
+| A      | 10    |
+| B      | 20    |
 
-$$
-\hat{\boldsymbol{\beta}} = \arg\min_{\boldsymbol{\beta}} \left\{ -\sum_{i=1}^n \left[y_i \log p_i + (1-y_i)\log(1-p_i)\right] + \lambda\lVert\boldsymbol{\beta}\rVert_1 \right\}
-$$
+### Figure 1: Sample Figure
+![Sample Figure](https://example.com/sample-figure.png)
 
-$$
-p_i = \sigma(\mathbf{x}_i^\top\boldsymbol{\beta}) = \frac{1}{1+e^{-\mathbf{x}_i^\top\boldsymbol{\beta}}}
-$$
+## 4. Discussion
+In this section, we discuss the implications of our findings and relate them to existing literature.
 
-L1惩罚将不重要特征的系数**压缩为零**，实现自动稀疏特征选择。取固定 $C=0.1$（$C=1/\lambda$）。
+## 5. Conclusion
+We summarize the main findings of our research and provide suggestions for future work.
+
+## 6. References
+This section includes references to the literature and resources cited throughout the report.
+
+## 7. Appendices
+We include any additional material, data, or information that supports the main text of the report.
+
+## 8. Acknowledgments
+We thank all individuals and organizations that contributed to this research effort.
