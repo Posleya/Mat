@@ -1,0 +1,10 @@
+Combination,Code,N,Pct,HLD_Prev,High_Risk_pct,PhlegmDamp_median,Activity_median
+LipidAbnormal only,001,577,57.7%,100.0%,40.7%,27.0,52.0
+All three (Core Triple),111,23,2.3%,100.0%,60.9%,63.0,37.0
+LowActivity + LipidAbnormal,011,106,10.6%,100.0%,50.9%,27.5,36.0
+HighPhlegm + LipidAbnormal,101,87,8.7%,100.0%,32.2%,62.0,52.0
+LowActivity only,010,30,3.0%,0.0%,0.0%,24.5,37.0
+HighPhlegm only,100,32,3.2%,0.0%,0.0%,62.0,51.0
+None of three,000,142,14.2%,0.0%,0.0%,25.0,52.0
+HighPhlegm + LowActivity,110,3,0.3%,0.0%,0.0%,61.0,35.0
+# MODEL NOTES,"Weights(Excess-AUC): Screen=43.3 PD=0.0 Act=0.0 Lipid=56.7. Cuts at 33/67pct: Low<52.0 Mid<67.6. PD_HIGH=60 (clinical standard ZYYXH/T157-2009 (Youden J=0.053 < 0.1, data-driven cut unreliable)). ACT_LOW=40 (ADL/IADL clinical standard (Youden J=0.023 < 0.1, data-driven cut unreliable)).",,,,,,
