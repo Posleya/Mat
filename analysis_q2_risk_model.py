@@ -501,7 +501,19 @@ for code, name in COMBO_MAP.items():
     })
 
 tbl7 = pd.DataFrame(combo_rows).sort_values("HLD_Prev_num", ascending=False)
-tbl7.drop(columns="HLD_Prev_num").to_csv(f"{OUT_DIR}/Table7_CoreCombinations.csv", index=False)
+tbl7_out = tbl7.drop(columns="HLD_Prev_num")
+# Append a metadata row documenting model parameters for reproducibility.
+# This covers both Table6 and Table7 derivation choices.
+meta7 = {col: "" for col in tbl7_out.columns}
+meta7["Combination"] = "# MODEL NOTES"
+meta7["Code"] = (
+    f"Weights(Excess-AUC): Screen={W_A:.1f} PD={W_B:.1f} Act={W_C:.1f} Lipid={W_D:.1f}. "
+    f"Cuts at 33/67pct: Low<{LOW_CUT} Mid<{HIGH_CUT}. "
+    f"PD_HIGH={PD_HIGH} ({pd_basis}). "
+    f"ACT_LOW={ACT_LOW} ({act_basis})."
+)
+tbl7_out = pd.concat([tbl7_out, pd.DataFrame([meta7])], ignore_index=True)
+tbl7_out.to_csv(f"{OUT_DIR}/Table7_CoreCombinations.csv", index=False)
 print("✓ Table 7 saved")
 print(tbl7[["Combination","N","Pct","HLD_Prev","High_Risk_pct"]].to_string(index=False))
 
