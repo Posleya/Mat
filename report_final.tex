@@ -1,0 +1,1098 @@
+\documentclass[12pt,a4paper]{ctexart}
+\usepackage[left=2.8cm,right=2.8cm,top=2.8cm,bottom=2.8cm]{geometry}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{mdframed}
+
+\hypersetup{colorlinks=true,linkcolor=blue!70!black,urlcolor=blue,citecolor=black}
+\setstretch{1.4}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small 中医体质-高血脂风险关联与三级预警模型}
+\lhead{\small MathorCup C题}
+\cfoot{\thepage}
+
+\newcommand{\eqnote}[1]{\quad\text{（#1）}}
+
+\title{
+  \textbf{\Large 基于可解释机器学习的中医体质--高血脂风险关联\\与三级预警模型}\\[0.5em]
+  \large 2026年第十六届MathorCup数学应用挑战赛\ C题
+}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{fancy}
+
+%% ============================================================
+%% 摘要
+%% ============================================================
+\begin{abstract}
+\noindent
+本文针对1000例中老年人样本，围绕三个核心科学问题展开系统研究。
+\textbf{问题一（A1）}：从血液生化指标和活动能力量表评分中，筛选能够有效表征痰湿体质严重程度的关键指标；
+\textbf{问题一（A2）}：筛选能够预警高血脂症发病风险的关键生物标志物；
+\textbf{问题一（B）与问题二}：量化评估九种中医体质对高血脂风险的差异贡献，并构建融合多维度特征的低/中/高三级风险预警模型。
+
+方法层面，本文采用"三阶段特征筛选框架"（Spearman秩相关+Benjamini-Hochberg FDR校正 $\to$ L1稀疏正则化 $\to$ XGBoost-TreeSHAP稳定性选择$\times$100次Bootstrap）系统处理特征选择问题；采用多变量Logistic回归+XGBoost+分层SHAP方法量化体质贡献；最终构建以XGBoost非血脂早筛模型（Stage-A）为核心、Excess-AUC客观权重推导的复合风险评分，实现三级动态预警。
+
+主要结论如下：TC和TG是预警高血脂症最强有力的指标（XGBoost OOF AUC = 0.998），在100次Bootstrap稳定性选择中出现频率均达100\%；血尿酸是最重要的独立危险代谢因素（多变量OR = 1.51，P < 0.001）；痰湿质积分不能被客观生化指标所预测（$R^2 \approx 0$），说明中医辨证体系具有独立的认识论维度；三级预警早筛模型AUC = 0.881（95\%CI：[0.853, 0.914]），权重由数据驱动（Excess-AUC法）；灵敏度分析表明模型高度稳健，权重扰动±30\%时最大级别变动率仅为3.4\%。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%% ============================================================
+%% 第一章：问题背景与问题重述
+%% ============================================================
+\section{问题背景与问题重述}
+
+\subsection{研究背景}
+
+随着现代社会生活方式的改变，心脑血管疾病已成为影响中老年人健康的主要威胁之一。\textbf{高血脂症（Hyperlipidemia，HLD）}——即血液中脂质代谢紊乱，主要表现为总胆固醇（TC）、甘油三酯（TG）、低密度脂蛋白胆固醇（LDL-C）升高或高密度脂蛋白胆固醇（HDL-C）降低——是动脉粥样硬化、冠心病和脑卒中等重大心脑血管疾病的首要可干预危险因素。据统计，我国40岁以上人群高血脂症患病率已超过40\%，而早期筛查和分层干预的覆盖率依然有限。
+
+中医理论认为，人体体质是决定个体对疾病易感性的根本因素之一。依据中医体质学说（王琦，2005），人体体质可分为九种类型：平和质（体质均衡，基础状态良好）、气虚质（气力不足，易疲劳）、阳虚质（阳气不足，怕冷）、阴虚质（阴液不足，虚火内盛）、\textbf{痰湿质}（痰湿内停，形体偏胖，代谢迟缓）、湿热质（湿热内蕴，易出现炎症反应）、血瘀质（血液流行不畅，微循环障碍）、气郁质（气机郁滞，情志不畅）和特禀质（有先天性或遗传性疾病倾向）。其中，痰湿质在中医理论和临床实践中被认为与脂代谢紊乱存在最为密切的关联，"痰湿内停，日久化脂"的理论提示痰湿体质人群罹患高血脂症的风险可能更高。
+
+然而，上述中医理论推断是否能被客观数据所证实？痰湿质严重程度是否能用血液生化和活动能力指标加以量化？九种体质对高血脂症的贡献是否存在可统计量化的差异？这些科学问题对于推动"中西医结合慢病风险评估"具有重要意义，也是本研究的出发点。
+
+\subsection{数据来源与特征池}
+
+本研究数据集涵盖1000例中老年受试者，共采集37个变量，涵盖以下五大类特征：
+
+\begin{enumerate}[label=(\arabic*)]
+\item \textbf{血脂类指标}：总胆固醇（TC，mmol/L）、甘油三酯（TG，mmol/L）、低密度脂蛋白胆固醇（LDL-C，mmol/L）、高密度脂蛋白胆固醇（HDL-C，mmol/L）。这四项指标是临床诊断高血脂症的标准检验项目，也是本研究的核心预测变量。
+\item \textbf{代谢相关指标}：空腹血糖（mmol/L）、血尿酸（$\mu$mol/L）、体重指数（BMI，kg/m$^2$）。血糖和尿酸反映体内代谢紊乱程度，BMI反映体型特征，三者均与慢性病风险相关。
+\item \textbf{日常生活活动能力量表（ADL）}：包括进食、穿衣、洗漱、如厕、行走等5个功能分项及ADL总分，反映受试者的基本生活自理能力。
+\item \textbf{工具性日常活动能力量表（IADL）}：包括购物、烹饪、服药管理、理财、家务等5个功能分项及IADL总分，反映受试者的社会性活动能力。
+\item \textbf{中医体质积分}：依据中华中医药学会《中医体质分类与判定》标准（ZYYXH/T157-2009），对九种体质分别给出0--100分的连续积分，得分越高表明该体质倾向越明显。
+\end{enumerate}
+
+\subsection{问题重述}
+
+在仔细阅读赛题后，本文将原始问题拆分为以下四个子任务：
+
+\textbf{子任务1A（痰湿严重度指标筛选）}：从血液生化和活动能力指标中，筛选出能够有效关联并表征痰湿体质严重程度（痰湿质积分，0--100分连续目标变量）的关键指标。核心问题在于：客观的血液/活动能力指标是否能替代中医辨证量表来衡量痰湿程度？
+
+\textbf{子任务1B（高血脂风险预警指标筛选）}：从相同的特征池中，识别出对高血脂发病风险（高血脂症0/1二分类标签）预警能力最强、最稳定的关键指标集，并提供多维度证据（统计显著性、多变量系数、非线性SHAP重要性）加以支持。
+
+\textbf{子任务1B扩展（九种体质差异贡献）}：在控制混杂因素（年龄、性别、吸烟、饮酒等）的前提下，定量评估九种中医体质积分对高血脂症发病风险的差异贡献，并识别贡献最大和相对具有保护效应的体质类型。
+
+\textbf{子任务2（三级风险预警模型）}：构建融合多维度特征（早筛机器学习概率、痰湿分层、活动能力分层、血脂异常计数）的复合风险评分模型，明确低/中/高三级风险的划分依据和临床可执行规则，并识别痰湿高风险人群的核心特征组合。
+
+%% ============================================================
+%% 第二章：数据概况与预处理
+%% ============================================================
+\section{数据概况与预处理}
+
+\subsection{样本基线特征}
+
+表\ref{tab:baseline}展示了按高血脂状态（是/否）分组后各主要变量的基线特征。数据集共1000例，其中高血脂阳性793例（79.3\%），阴性207例（20.7\%）。组间差异采用Mann-Whitney U检验（连续变量非正态分布情况下更稳健）。
+
+\begin{table}[H]
+\centering
+\caption{样本基线特征（按高血脂状态分组，连续变量以均值$\pm$标准差表示）}
+\label{tab:baseline}
+\begin{tabular}{lllll}
+\toprule
+变量 & 总体（$n$=1000） & 非高血脂（$n$=207） & 高血脂（$n$=793） & P值 \\
+\midrule
+TC（mmol/L）         & 5.91$\pm$1.82 & 4.34$\pm$1.06 & 6.31$\pm$1.76 & \textbf{<0.001} \\
+TG（mmol/L）         & 1.88$\pm$1.01 & 0.96$\pm$0.41 & 2.13$\pm$0.98 & \textbf{<0.001} \\
+LDL-C（mmol/L）      & 2.61$\pm$0.61 & 2.38$\pm$0.48 & 2.67$\pm$0.62 & \textbf{<0.001} \\
+HDL-C（mmol/L）      & 1.30$\pm$0.26 & 1.39$\pm$0.21 & 1.28$\pm$0.27 & \textbf{<0.001} \\
+空腹血糖（mmol/L）   & 4.98$\pm$1.01 & 5.07$\pm$0.97 & 4.96$\pm$1.01 & 0.206 \\
+血尿酸（$\mu$mol/L） & 337.83$\pm$141.35 & 293.17$\pm$72.42 & 349.49$\pm$152.25 & \textbf{<0.001} \\
+BMI（kg/m$^2$）      & 21.93$\pm$2.94 & 21.78$\pm$3.01 & 21.97$\pm$2.92 & 0.403 \\
+ADL总分              & 24.89$\pm$6.92 & 24.52$\pm$6.98 & 24.98$\pm$6.90 & 0.384 \\
+IADL总分             & 24.82$\pm$7.17 & 24.79$\pm$7.38 & 24.83$\pm$7.11 & 0.731 \\
+活动量表总分         & 49.71$\pm$10.11 & 49.31$\pm$10.28 & 49.81$\pm$10.07 & 0.520 \\
+痰湿质积分           & 32.98$\pm$20.13 & 33.37$\pm$20.69 & 32.87$\pm$20.00 & 0.817 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+从表\ref{tab:baseline}可以看出，TC、TG、LDL-C、HDL-C以及血尿酸在两组间存在极显著的统计学差异（P < 0.001），这与高血脂症的临床诊断标准高度一致——血脂代谢异常正是高血脂症的核心病理机制。值得注意的是，\textbf{痰湿质积分在两组间无统计学差异}（P = 0.817），两组均值相差不足0.5分，说明仅凭单变量比较无法在痰湿质积分与高血脂之间建立统计联系，这一发现促使我们必须采用更精细的多变量建模手段深入探究两者的关系结构。此外，ADL/IADL总分和BMI等变量在两组间同样无显著差异（P > 0.38），提示活动能力和体型本身对高血脂症的预警能力可能较为有限，但其在与其他变量的联合作用中仍可能发挥辅助作用。
+
+\subsection{数据预处理流程}
+
+为保证后续建模的规范性和可重复性，我们按照以下步骤进行系统化数据预处理：
+
+\textbf{步骤一：列名标准化。}将数据集中的中文列名统一映射为英文缩写标识符，避免因字符编码问题导致的程序异常，同时方便后续代码中的变量引用。
+
+\textbf{步骤二：构建血脂异常计数变量。}依据我国成人血脂正常参考区间（TC $\leq$ 6.2 mmol/L，TG $\leq$ 1.7 mmol/L，LDL-C $\leq$ 3.1 mmol/L，HDL-C $\geq$ 1.04 mmol/L），对每一例受试者计算异常血脂指标的数量：
+
+\begin{equation}
+\text{LipidAbnormalCount} = \sum_{m \in \{\text{TC,TG,LDL-C,HDL-C}\}} \mathbf{1}[x_m \notin \text{正常区间}] \in \{0, 1, 2, 3, 4\}
+\label{eq:lipidcount}
+\end{equation}
+
+该派生变量将在后续三级风险预警模型中作为血脂分层组件的直接输入。
+
+\textbf{步骤三：Z-score标准化。}对所有连续型特征进行零均值单位方差标准化：
+
+\begin{equation}
+x_j^* = \frac{x_j - \mu_j}{\sigma_j}
+\label{eq:zscore}
+\end{equation}
+
+关键工程细节：标准化操作必须在每个交叉验证折的\textbf{训练折内}拟合均值和标准差，再将其应用于验证折，以防止验证折信息在标准化阶段被"提前利用"（即"数据泄露"问题）。
+
+\textbf{步骤四：处理类别不平衡。}高血脂症阳性率为79.3\%，存在明显的类别不平衡（正负例约4:1）。若不加处理，分类模型会倾向于将所有样本预测为"高血脂症阳性"从而得到表面上较高的准确率。对此，在XGBoost分类器中设置：
+
+\begin{equation}
+\text{scale\_pos\_weight} = \frac{N_{\text{neg}}}{N_{\text{pos}}} = \frac{207}{793} \approx 0.261
+\label{eq:classweight}
+\end{equation}
+
+即赋予少数类（高血脂阴性）约4倍于多数类的样本权重，使模型在优化过程中对两类样本给予相对均衡的关注。
+
+
+%% ============================================================
+%% 第三章：建模方案总体设计
+%% ============================================================
+\section{建模方案总体设计}
+
+\subsection{方案选择依据}
+
+在制定建模方案之前，我们首先从数据特征和研究目标两个维度梳理了关键约束条件，并据此选择了最适合的方法组合。下面逐一说明选择理由：
+
+\textbf{（1）样本规模约束（$N$=1000，变量数$p \approx 30$）。}样本量1000属于中等规模，而变量数约30，$N/p \approx 33$，这样的数据维度使得深度学习模型（如神经网络）面临严重过拟合风险，且可解释性差。传统的线性模型虽然具有可解释性，但可能无法捕捉特征间的非线性交互效应。因此，我们选择\textbf{Elastic Net（弹性网络）}和\textbf{XGBoost（极端梯度提升树）}作为主力模型：前者在提供稀疏解释的同时兼顾L2正则对共线特征的平滑处理，后者在捕捉非线性关系方面具有强大优势，并且通过引入正则化项有效控制过拟合。
+
+\textbf{（2）变量多重共线性问题。}数据集中存在若干高度相关的变量组：TC与LDL-C在生化机制上密切相关（TC = LDL-C + HDL-C + VLDL-C），Pearson相关系数约为0.8；ADL各功能分项（进食、穿衣等）与ADL总分高度线性相关；IADL同理。在共线性存在的情况下，普通最小二乘法（OLS）的参数估计不稳定，参数方差急剧膨胀。L1正则化（Lasso）的核心优势在于它能够在高度相关特征组中自动选择一个代表性特征并将其余特征系数压缩为零，从而实现自动稀疏特征选择，避免多余共线信息干扰。
+
+\textbf{（3）预测与可解释性的双重需求。}本研究的最终目的不仅是建立预测模型，更是要\textbf{解释"哪些特征最重要、以何种方式影响结果"}，为临床实践提供可执行的指引。为此，我们引入\textbf{SHAP（SHapley Additive exPlanations）}方法。SHAP基于合作博弈论中的Shapley值原理，能够为每个样本的每个特征分配一个精确的、具有数学保证的贡献值，同时支持全局重要性排序（取所有样本绝对SHAP值的均值）和方向性解读（正SHAP值表示该特征使预测增大）。将SHAP与Logistic回归输出的优势比（OR）结合，可以同时提供"频率主义统计推断"和"机器学习可解释性"两种视角的证据，大幅提高结论的可信度。
+
+\textbf{（4）特征选择稳定性问题。}单次模型训练所选出的特征集受随机性（如数据抽样）影响，可重复性较差。为此，我们引入\textbf{Bootstrap稳定性选择}机制：对原始数据进行100次有放回抽样，每次独立拟合模型并记录重要特征，最终以特征出现频率（稳定性频率$f^{\text{stab}}$）衡量其重要性的稳定性。只有稳定频率超过50\%的特征才被认为是可靠的重要特征，这一阈值设定参考了稳定性选择文献的通行标准。
+
+\subsection{三阶段特征筛选框架}
+
+对于特征选择任务（子任务1A和1B），我们设计了"三阶段特征筛选框架"，其整体流程如下：
+
+\begin{equation}
+\underbrace{\text{全部候选特征（$p \approx 30$）}}_{\text{起点}}
+\xrightarrow{\quad\text{Stage 1: Spearman + FDR}\quad}
+\underbrace{\text{显著相关子集}}_{\text{初筛}}
+\xrightarrow{\quad\text{Stage 2: L1稀疏回归}\quad}
+\underbrace{\text{多变量有效特征集}}_{\text{精筛}}
+\xrightarrow{\quad\text{Stage 3: SHAP稳定性选择}}
+\underbrace{\text{最终关键指标集}}_{\text{结果}}
+\label{eq:framework}
+\end{equation}
+
+三个阶段相互补充、逐步深化：Stage 1负责从统计显著性角度过滤掉与目标变量完全无关的特征，减轻后续多变量建模的计算负担；Stage 2在控制多重共线性的同时进行多变量联合筛选，识别具有\textbf{独立}预测价值的特征；Stage 3通过100次Bootstrap估计特征重要性的可重复性，从而筛选出既重要又稳定的关键特征。
+
+\subsubsection{Stage 1：Spearman秩相关 + Benjamini-Hochberg FDR校正}
+
+Spearman秩相关系数是一种非参数相关度量，适用于不满足正态分布的数据，并且对极端值和非线性单调关系更为鲁棒。对于特征$x_j$（$j = 1, \ldots, p$）与目标变量$y$，Spearman秩相关系数的计算公式为：
+
+\begin{equation}
+r_s(x_j, y) = 1 - \frac{6\sum_{i=1}^{n}d_i^2}{n(n^2 - 1)}, \quad d_i = \text{rank}(x_{ij}) - \text{rank}(y_i)
+\label{eq:spearman}
+\end{equation}
+
+其中$\text{rank}(\cdot)$表示升序排列后的秩次，$d_i$为第$i$个样本在特征$x_j$和目标变量$y$上秩次之差。当$r_s$接近$\pm 1$时，两变量之间存在强单调关联；当$r_s$接近0时，两者之间无线性单调关联。
+
+然而，对$p$个特征同时进行假设检验会产生严重的\textbf{多重检验问题}：若每个检验的显著性水平设为$\alpha = 0.05$，则对$p = 30$个特征进行检验时，即使所有原假设都成立，期望的误拒个数也高达$30 \times 0.05 = 1.5$个（即纯粹由偶然性产生的假阳性）。为控制这一问题，我们使用\textbf{Benjamini-Hochberg（BH）假发现率（FDR）校正}方法：将$p$个检验的p值升序排列为$p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(p)}$，然后对每个排序位置$j$检验：
+
+\begin{equation}
+H_0^{(j)}\text{ 被拒绝} \iff p_{(j)} \leq \frac{j}{p} \cdot q^*, \quad q^* = 0.05
+\label{eq:fdr}
+\end{equation}
+
+BH校正在控制假阳性率（期望的错误拒绝比例$\leq 5\%$）的同时，比Bonferroni校正（$p_{(j)} \leq \alpha/p$）更宽松，具有更高的统计检验功效（即不容易漏掉真正显著的特征）。
+
+\subsubsection{Stage 2：L1稀疏多变量建模}
+
+经过Stage 1筛选后，进入多变量阶段。对于\textbf{连续目标变量}（痰湿积分，A1任务），使用\textbf{Elastic Net回归}：
+
+\begin{equation}
+\hat{\bm{\beta}}^{\text{EN}} = \arg\min_{\bm{\beta}} \left\{ \frac{1}{2n}\|\mathbf{y} - \mathbf{X}\bm{\beta}\|_2^2 + \lambda\left[\alpha\|\bm{\beta}\|_1 + \frac{1-\alpha}{2}\|\bm{\beta}\|_2^2\right] \right\}
+\label{eq:elasticnet}
+\end{equation}
+
+其中：$\lambda > 0$是总体正则化强度，通过5折×5重复交叉验证选取最优值$\lambda^* = 15.06$；$\alpha \in [0, 1]$是L1/L2混合比，从候选集$\{0.1, 0.3, 0.5, 0.7, 0.9, 1.0\}$中搜索，最优值$\alpha^* = 0.10$（即偏向L2正则，适合共线性较强的情形）。当某特征的系数$\hat{\beta}_j = 0$时，该特征被自动从模型中剔除，实现稀疏特征选择。
+
+对于\textbf{二分类目标变量}（高血脂症，A2任务），使用\textbf{L1正则化Logistic回归（Lasso Logistic）}：
+
+\begin{equation}
+\hat{\bm{\beta}}^{\text{L1}} = \arg\min_{\bm{\beta}} \left\{ -\frac{1}{n}\sum_{i=1}^{n}\left[y_i \log \sigma(\mathbf{x}_i^\top\bm{\beta}) + (1-y_i)\log(1-\sigma(\mathbf{x}_i^\top\bm{\beta}))\right] + \lambda\|\bm{\beta}\|_1 \right\}
+\label{eq:lasso_logistic}
+\end{equation}
+
+其中sigmoid函数为：
+
+\begin{equation}
+\sigma(z) = \frac{1}{1 + e^{-z}}
+\label{eq:sigmoid}
+\end{equation}
+
+固定正则化参数$C = 1/\lambda = 0.1$（较强的惩罚），L1惩罚将不重要特征的系数压缩为精确的零，相比软化系数的Ridge回归，Lasso能够产生真正意义上的稀疏解。
+
+\subsubsection{Stage 3：XGBoost-TreeSHAP稳定性选择（$\times$100次Bootstrap）}
+
+XGBoost（eXtreme Gradient Boosting）是一种集成梯度提升决策树算法，通过将$T$棵树的预测结果相加来建立强学习器：
+
+\begin{equation}
+\hat{y}_i = \sum_{t=1}^{T} f_t(\mathbf{x}_i), \quad f_t \in \mathcal{F}
+\label{eq:xgboost}
+\end{equation}
+
+其中$\mathcal{F}$是所有可能决策树的空间，$f_t$是第$t$棵树。XGBoost在每次迭代时以梯度和Hessian信息为导向选择最优分裂点，同时通过L1/L2树正则化项抑制过拟合。
+
+SHAP（SHapley Additive exPlanations）方法基于合作博弈论中的Shapley值，为样本$i$的特征$j$分配贡献值$\phi_j(\mathbf{x}_i)$：
+
+\begin{equation}
+\phi_j(\mathbf{x}_i) = \sum_{S \subseteq \mathcal{F} \setminus \{j\}} \frac{|S|!\,(|\mathcal{F}|-|S|-1)!}{|\mathcal{F}|!}\left[v(S \cup \{j\}) - v(S)\right]
+\label{eq:shapley}
+\end{equation}
+
+其中$\mathcal{F}$为全特征集，$S$为不包含特征$j$的任意子集，$v(S) = \mathbb{E}[f(\mathbf{x}) \mid \mathbf{x}_S]$为已知特征子集$S$时模型的期望输出。Shapley值的本质是：特征$j$的贡献等于它在所有可能的特征子集排列方式中带来的边际预测增量的加权平均值。TreeSHAP算法能够以$O(TLD^2)$的多项式时间精确计算决策树模型的Shapley值，其中$L$为叶节点数，$D$为树的深度。
+
+特征$j$的\textbf{全局重要性}定义为所有样本绝对SHAP值的均值：
+
+\begin{equation}
+\bar{\phi}_j = \frac{1}{n}\sum_{i=1}^{n}|\phi_j(\mathbf{x}_i)|
+\label{eq:global_shap}
+\end{equation}
+
+\textbf{Bootstrap稳定性频率}的定义和计算过程如下：对原始数据进行$B = 100$次有放回抽样，每次重新拟合XGBoost模型并计算SHAP值，记录该次排序中Top-10特征的集合。对每个特征$j$，统计100次中进入Top-10的频率：
+
+\begin{equation}
+f_j^{\text{stab}} = \frac{1}{B}\sum_{b=1}^{B}\mathbf{1}\left[j \in \text{Top-10}\left(\bar{\phi}^{(b)}\right)\right], \quad f_j^{\text{stab}} \in [0, 1]
+\label{eq:stability}
+\end{equation}
+
+设定\textbf{稳定性选择阈值}$f_j^{\text{stab}} > 0.50$，即特征需在超过一半的Bootstrap重采样中保持高重要性，才被认定为"稳定关键特征"。
+
+\subsection{评估策略}
+
+为获得尽可能无偏的泛化性能估计，不同任务采用不同的评估策略：
+
+\textbf{回归任务（A1，痰湿积分预测）}：采用5折$\times$3重复交叉验证（共15次折验证），汇报$R^2$和RMSE的均值$\pm$标准差。$R^2$反映模型解释的方差比例，$R^2 = 1$表示完美预测，$R^2 = 0$表示与零模型（预测均值）等价，$R^2 < 0$表示模型预测能力劣于直接预测均值。
+
+\textbf{分类任务（A2，高血脂症分类）}：采用5折分层CV，生成全数据集的OOF（Out-Of-Fold）预测概率，计算AUC、F1、灵敏度（Sensitivity）和特异度（Specificity）。最优分类阈值$\tau^*$由Youden指数最大化确定：
+
+\begin{equation}
+\tau^* = \arg\max_{\tau}\,J(\tau), \quad J(\tau) = \text{Sensitivity}(\tau) + \text{Specificity}(\tau) - 1
+\label{eq:youden}
+\end{equation}
+
+Youden指数$J$的范围为$[0, 1]$，$J = 0$表示模型无区分能力，$J = 1$表示模型完美区分。
+
+
+%% ============================================================
+%% 第四章：问题一（A1）痰湿质严重度关键指标筛选
+%% ============================================================
+\section{问题一（A1）：痰湿质严重度关键指标筛选}
+
+\subsection{建模方法说明}
+
+本子任务的核心目标是回答一个具有重要中医科学价值的问题：\textbf{能否用血液生化指标和活动能力评分来量化预测一个人的痰湿体质程度（痰湿质积分）？}如果可以，哪些指标最为关键？如果不可以，这一"不可预测性"本身意味着什么？
+
+目标变量为痰湿质积分（0--100分，连续变量），均值为32.98，标准差为20.13。特征池包含20个候选变量（血脂4项、代谢3项、ADL5项+总分、IADL5项+总分）。选择\textbf{回归任务框架}+三阶段筛选方法，理由如下：痰湿积分为连续变量，回归模型能直接刻画特征与积分之间的量化关系；三阶段框架从单变量关联性、多变量独立效应和非线性稳定性三个维度全面评估特征贡献，比单一方法更加稳健。
+
+\subsection{Stage 1：Spearman相关与FDR校正结果}
+
+对20个候选特征与痰湿质积分计算Spearman秩相关系数（公式\ref{eq:spearman}），并进行BH-FDR校正（公式\ref{eq:fdr}，$q^* = 0.05$）。结果显示：\textbf{所有20个候选特征均未通过FDR显著性阈值}，最小的FDR校正P值为0.255，对应ADL\_Eating（进食功能分项，$r_s = -0.079$）。全部特征的Spearman相关系数绝对值均小于0.08，其中最大绝对值对应ADL\_Eating（$|r_s| = 0.079$），其次为ADL总分（$|r_s| = 0.053$）。
+
+这一Stage 1结果传递了一个重要的初步信息：在我们的特征池范围内，血液生化指标和活动能力量表与痰湿质积分之间\textbf{不存在显著的线性单调关联}。这与中医理论中对痰湿辨证的复杂性描述是相容的——痰湿体质的判别通常依赖于舌苔（厚腻苔）、脉象（滑脉）、体型（形体肥胖）以及主观症状（肢体沉重、嗜睡）等综合信息，而非简单的血液化验数值。
+
+\subsection{Stage 2：Elastic Net多变量回归结果}
+
+将通过Stage 1预筛的特征（注：为保留探索性，此处将所有20个特征均纳入，而不强行要求FDR显著）送入Elastic Net回归（公式\ref{eq:elasticnet}）。超参数最优解为$\lambda^* = 15.06$，$\alpha^* = 0.10$。在此参数设置下，\textbf{所有特征的Elastic Net系数均被压缩为零}，模型退化为仅预测目标变量均值的零模型。
+
+5折$\times$3重复交叉验证结果如表\ref{tab:phlegm_cv}所示。
+
+\begin{table}[H]
+\centering
+\caption{痰湿质严重度预测模型交叉验证性能（5折×3重复，共15次折）}
+\label{tab:phlegm_cv}
+\begin{tabular}{lll}
+\toprule
+模型 & $R^2$（均值$\pm$标准差） & RMSE（均值$\pm$标准差，单位：积分） \\
+\midrule
+Elastic Net & $-0.008 \pm 0.009$ & $20.16 \pm 0.61$ \\
+XGBoost     & $-0.174 \pm 0.058$ & $21.74 \pm 0.66$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+需要特别说明的是，$R^2 < 0$的含义：当模型的均方误差（MSE）\textit{大于}目标变量的方差时，即模型的预测精度还不如简单预测均值（即零模型），就会出现负的$R^2$。Elastic Net的$R^2 \approx -0.008 \approx 0$，说明模型几乎不能从这20个特征中提取任何有用的预测信息；XGBoost的$R^2 \approx -0.174$，甚至更差，意味着在小样本上，拥有更多参数的非线性模型在这里出现了明显的过拟合，在验证集上表现比均值预测更差。
+
+\subsection{Stage 3：SHAP稳定性选择与特征排序}
+
+尽管整体预测性能$R^2 \approx 0$，SHAP稳定性选择可以揭示在100次Bootstrap重复中相对最为关联的特征排序，为"在本数据范围内，哪些指标与痰湿积分具有最高关联性"提供参考信息。结果如表\ref{tab:phlegm_shap}所示。
+
+\begin{table}[H]
+\centering
+\caption{痰湿质严重度关键指标SHAP稳定性排序（Top 9，100次Bootstrap）}
+\label{tab:phlegm_shap}
+\begin{tabular}{clllll}
+\toprule
+排名 & 特征 & 平均$|\text{SHAP}|$ & 稳定频率$f^{\text{stab}}$ & Spearman $r_s$ & 关联方向 \\
+\midrule
+1 & \textbf{BMI}   & 2.303 & \textbf{100\%} & $-0.022$ & 负 \\
+2 & \textbf{TC}    & 1.647 & \textbf{100\%} & $-0.035$ & 负 \\
+3 & ADL\_Eating    & 1.366 & 59\%  & $-0.079$ & 负 \\
+4 & \textbf{HDL-C} & 1.359 & \textbf{95\%}  & $+0.014$ & 正 \\
+5 & \textbf{ADL\_Total} & 1.346 & 83\%  & $-0.053$ & 负 \\
+6 & \textbf{LDL-C} & 1.318 & \textbf{94\%}  & $+0.010$ & 正 \\
+7 & \textbf{TG}    & 1.242 & \textbf{95\%}  & $-0.016$ & 负 \\
+8 & \textbf{空腹血糖} & 1.177 & \textbf{94\%}  & $-0.020$ & 负 \\
+9 & \textbf{血尿酸}   & 1.131 & \textbf{94\%}  & $-0.010$ & 负 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{注：粗体特征表示稳定频率$\geq 50\%$；所有$r_s$均不显著（BH-FDR校正后P > 0.25）。SHAP反映非线性交互重要性，不等同于统计显著性。}
+
+图\ref{fig:shap_phlegm}展示了痰湿质严重度XGBoost模型的SHAP蜂群图（Beeswarm Plot）。蜂群图的纵轴按全局重要性降序排列特征，横轴为SHAP值（正值=该特征使预测痰湿积分增大），每个点代表一个样本，颜色表示该样本该特征的取值高低（红色=高值，蓝色=低值）。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{outputs/Fig2A_SHAP_PhlegmDampness.png}
+\caption{痰湿质严重度XGBoost模型SHAP蜂群图。纵轴按全局重要性（$\bar{\phi}_j$，公式\ref{eq:global_shap}）降序排列，横轴为SHAP值。各点SHAP值分布广且无明显方向性，左右几乎对称，与$R^2 \approx 0$的结论完全一致：这些特征与痰湿积分之间不存在系统性的可预测关联。}
+\label{fig:shap_phlegm}
+\end{figure}
+
+从图\ref{fig:shap_phlegm}中可以清晰观察到：每个特征的点云（SHAP值分布）几乎都以0为中心左右对称，没有任何特征呈现出"高值（红色）对应大正SHAP、低值（蓝色）对应大负SHAP"的典型有意义预测特征模式。这与$R^2 \approx 0$的数值结论高度一致，从可视化角度进一步验证了"特征对痰湿积分的预测能力近乎为零"这一结论。
+
+\subsection{本节小结}
+
+\textbf{本节的核心发现有以下几点：}
+
+第一，在本数据集的特征池中（血脂生化4项、代谢3项、ADL/IADL量表各5分项+总分），\textbf{没有任何指标能够有效预测痰湿质积分}。无论是单变量Spearman相关分析，还是多变量Elastic Net回归，或是XGBoost非线性模型，预测性能均接近于零（$R^2 \approx 0$，甚至为负）。
+
+第二，\textbf{BMI（稳定频率100\%）和TC（稳定频率100\%）}是在SHAP稳定性排序中始终保持最高重要性的两个特征，可以作为痰湿体质的"伴随生化标记"——虽然关联微弱，但在临床实践中若同时观察到BMI偏高和TC偏高，在其他条件相同的情况下，可作为需要进一步中医辨证评估痰湿的参考信号。
+
+第三，这一结果本身具有重要的中医科学价值：它从现代数据科学的角度证明了\textbf{中医体质辨证（痰湿质量表积分）具有独立于客观生化指标的认识论维度}，不能被简单的血液化验数据替代或简化。未来若要建立客观的痰湿质量化指标体系，必须纳入舌苔厚腻程度、脉象滑度、皮肤油光程度等中医特色客观数据，而非仅依赖现有的生化检验。
+
+%% ============================================================
+%% 第五章：问题一（A2）高血脂风险预警关键指标筛选
+%% ============================================================
+\section{问题一（A2）：高血脂风险预警关键指标筛选}
+
+\subsection{建模方法说明}
+
+与A1任务（痰湿积分回归）不同，A2任务的目标变量为\textbf{高血脂症二分类标签}（0=阴性，1=阳性）。这是一个典型的\textbf{二分类预测问题}，适用Logistic回归（提供系数解释和OR）和XGBoost（捕捉非线性判别边界）的组合方案。
+
+特别地，本任务中目标变量（是否患高血脂症）与部分特征（如TC、TG）在逻辑上存在直接关联——高血脂症的临床诊断标准本身就基于血脂指标的参考区间。因此，我们\textbf{预期血脂指标将在判别任务中表现极为突出}，而非血脂类的代谢指标（血尿酸、血糖）和活动能力指标（ADL/IADL）可能提供相对独立的补充预测价值。这一预期将通过三阶段分析得到系统验证。
+
+\subsection{Stage 1：Spearman相关与FDR校正}
+
+对同一特征池中各特征与高血脂二分类标签（$y \in \{0, 1\}$）计算Spearman相关系数并做BH-FDR校正，结果如表\ref{tab:hld_spearman}所示。
+
+\begin{table}[H]
+\centering
+\caption{高血脂症风险预警指标单变量Spearman相关（FDR校正，$q^* = 0.05$）}
+\label{tab:hld_spearman}
+\begin{tabular}{lllll}
+\toprule
+特征 & Spearman $r_s$ & FDR校正P值 & 方向 & FDR显著性 \\
+\midrule
+TG（甘油三酯）    & $+$0.489 & $7.4 \times 10^{-60}$ & $\uparrow$ 升高 & \checkmark \\
+TC（总胆固醇）    & $+$0.435 & $1.6 \times 10^{-46}$ & $\uparrow$ 升高 & \checkmark \\
+血尿酸            & $+$0.204 & $4.7 \times 10^{-10}$ & $\uparrow$ 升高 & \checkmark \\
+LDL-C             & $+$0.184 & $2.3 \times 10^{-8}$  & $\uparrow$ 升高 & \checkmark \\
+HDL-C（高密度脂蛋白） & $-$0.166 & $5.6 \times 10^{-7}$ & $\downarrow$ 降低 & \checkmark \\
+活动量表各项       & $\approx 0$ & $> 0.6$ & -- & $\times$ \\
+BMI、血糖          & $\approx 0$ & $> 0.6$ & -- & $\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Stage 1结果非常清晰：五项血脂及血尿酸相关指标通过了FDR显著性筛选，而活动量表各分项、BMI和空腹血糖均未通过（FDR校正P > 0.60）。TG和TC分别以$r_s = 0.489$和$r_s = 0.435$位居前两位，其FDR校正P值之小（分别为$7.4 \times 10^{-60}$和$1.6 \times 10^{-46}$）意味着即使在极为严格的多重校正下，这两项指标与高血脂症之间的关联仍然极为显著。
+
+值得关注的是，\textbf{HDL-C呈现负相关}（$r_s = -0.166$，方向为降低）——这符合HDL-C被称为"好胆固醇"的临床认知，高水平HDL-C对心血管疾病具有保护作用，因此HDL-C偏低的人群倾向于更高的高血脂症风险。
+
+\subsection{Stage 2：L1正则化Logistic回归}
+
+将Stage 1筛出的5个显著特征（以及所有候选特征，以L1惩罚自动筛选）送入L1-Logistic回归（公式\ref{eq:lasso_logistic}），设置$C = 0.1$（较强惩罚）。最终模型保留5个非零系数，对应的Logit预测方程为：
+
+\begin{equation}
+\log\frac{\hat{p}}{1-\hat{p}} = \hat{\beta}_0 + \underbrace{2.74}_{\text{TG}} \cdot \text{TG}^* + \underbrace{2.04}_{\text{TC}} \cdot \text{TC}^* - \underbrace{0.45}_{\text{HDL-C}} \cdot \text{HDL-C}^* + \underbrace{0.40}_{\text{UA}} \cdot \text{UA}^* + \underbrace{0.39}_{\text{LDL-C}} \cdot \text{LDL-C}^*
+\label{eq:logit_hld}
+\end{equation}
+
+其中$(\cdot)^*$表示对应变量的Z-score标准化值（公式\ref{eq:zscore}）。解读这个方程的要点如下：系数的大小反映了每个特征在控制其他特征的情况下对Logit的独立贡献。\textbf{TG的系数最大（2.74）}，意味着TG每增加1个标准差（约1.01 mmol/L），高血脂症的对数几率（log-odds）增加2.74，换算成优势比为$e^{2.74} \approx 15.5$——考虑到这是在控制TC等其他血脂指标情况下的偏效应，这一数值说明TG具有极强的独立区分能力。HDL-C系数为负（$-0.45$），进一步验证了其保护性方向。
+
+5折分层OOF评估结果：AUC = 0.977，F1 = 0.930，灵敏度 = 90.8\%，特异度 = 93.2\%。这表明仅凭五项血脂/血尿酸指标，线性Logistic回归已经能够以较高精度识别高血脂症患者。
+
+\subsection{Stage 3：XGBoost模型性能与SHAP分析}
+
+XGBoost分类器（300棵树，最大深度6，学习率0.05，$\text{scale\_pos\_weight} = 0.261$）在5折分层OOF评估中取得了几乎完美的性能，如表\ref{tab:hld_model}所示。
+
+\begin{table}[H]
+\centering
+\caption{高血脂症风险预测模型性能对比（5折分层OOF）}
+\label{tab:hld_model}
+\begin{tabular}{lllll}
+\toprule
+模型 & AUC（OOF） & F1（均值$\pm$标准差） & 灵敏度 & 特异度 \\
+\midrule
+Logistic L1 & 0.977 & $0.930 \pm 0.015$ & 90.8\% & 93.2\% \\
+\textbf{XGBoost} & \textbf{0.998} & $\mathbf{0.998 \pm 0.003}$ & \textbf{100.0\%} & \textbf{98.6\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+图\ref{fig:roc_cm}展示了两模型的ROC曲线和XGBoost的混淆矩阵。XGBoost的OOF AUC高达0.998，非常接近理论上限1.000，表明在此数据集上TC/TG等血脂指标与高血脂症标签之间存在\textbf{高度可分的非线性判别边界}，XGBoost通过决策树分裂规则对这种边界进行了极为精准的建模。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.90\textwidth]{outputs/Fig4_ROC_ConfusionMatrix.png}
+\caption{高血脂症风险预测ROC曲线（左）与XGBoost混淆矩阵（右）。左图中XGBoost的OOF ROC曲线（蓝色）几乎贴近左上角，AUC=0.998，大幅优于逻辑回归基线（AUC=0.977）。右图混淆矩阵（Youden最优阈值$\tau^*$下）显示误分类样本极少，高血脂阳性的识别率接近100\%。}
+\label{fig:roc_cm}
+\end{figure}
+
+图\ref{fig:feature_importance}展示了两个任务（A1痰湿质积分 vs. A2高血脂症）的XGBoost特征重要性对比图，图\ref{fig:shap_hld}展示了高血脂症任务的SHAP蜂群图。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{outputs/Fig1_FeatureImportance.png}
+\caption{两任务XGBoost模型Top-10特征重要性对比（平均$|\text{SHAP}|$，公式\ref{eq:global_shap}）。左图（痰湿质A1）：各特征SHAP值均匀且微弱（最大仅约2.3），无明显主导特征；右图（高血脂A2）：TC和TG的SHAP值远超其他特征，形成压倒性主导，充分证明血脂指标对高血脂症标签的决定性作用。}
+\label{fig:feature_importance}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{outputs/Fig2B_SHAP_Hyperlipidemia.png}
+\caption{高血脂症XGBoost模型SHAP蜂群图。TC和TG高值（红色点）对应大正SHAP值（增大高血脂风险），HDL-C高值（红色点）对应大负SHAP值（降低风险），与临床认知完全一致；LDL-C和血尿酸方向为正（升高增大风险）。与图\ref{fig:shap_phlegm}的痰湿质SHAP图形成鲜明对比：高血脂任务呈现清晰的方向性点云分布。}
+\label{fig:shap_hld}
+\end{figure}
+
+图\ref{fig:shap_stability}展示了SHAP稳定性选择结果（100次Bootstrap频率）。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{outputs/Fig5_SHAPStability.png}
+\caption{SHAP稳定性选择频率（100次Bootstrap，Top-12特征）。高血脂任务（右图）中TC和TG稳定频率均达100\%；IADL\_Medication（服药管理能力，93\%）和Activity\_Total（综合活动量，87\%）具有独立于血脂指标的额外稳定预测价值，构成二级指标。}
+\label{fig:shap_stability}
+\end{figure}
+
+\subsection{最终关键指标集与分级}
+
+综合三阶段分析，对各特征的三重证据（Spearman显著性、L1-Logistic系数、SHAP稳定频率）进行汇总，将高血脂风险预警关键指标分为两个等级，如表\ref{tab:hld_final}所示。
+
+\begin{table}[H]
+\centering
+\caption{高血脂症风险预警最终关键指标集（三重筛选验证结果汇总）}
+\label{tab:hld_final}
+\begin{tabular}{clllllll}
+\toprule
+排名 & 特征 & Spearman $r_s$ & FDR显著 & L1系数 & 平均$|\text{SHAP}|$ & 稳定频率 & 级别 \\
+\midrule
+1 & \textbf{TG}     & $+$0.489 & \checkmark & 2.74  & 3.149 & 100\% & 一级 \\
+2 & \textbf{TC}     & $+$0.435 & \checkmark & 2.03  & 3.164 & 100\% & 一级 \\
+3 & \textbf{血尿酸} & $+$0.204 & \checkmark & 0.40  & 0.503 &  32\% & 一级 \\
+4 & \textbf{HDL-C}  & $-$0.166 & \checkmark & $-$0.45 & 0.218 & 37\% & 一级 \\
+5 & \textbf{LDL-C}  & $+$0.184 & \checkmark & 0.39  & 0.136 &  12\% & 一级 \\
+6 & IADL\_Medication & $+$0.033 & $\times$ & 0     & 0.054 &  93\% & 二级 \\
+7 & Activity\_Total  & $+$0.020 & $\times$ & 0     & 0.020 &  87\% & 二级 \\
+8 & ADL\_Total       & $+$0.028 & $\times$ & 0     & 0.031 &  74\% & 二级 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{一级关键指标}（统计显著、多变量独立效应和/或非线性SHAP稳定性均有支持）：TC、TG、HDL-C、LDL-C、血尿酸。这五项指标构成高血脂症风险预警的核心指标集，其中TC和TG获得三重最强证据（Spearman、L1、SHAP），是最优先的预警指标。
+
+\textbf{二级稳定指标}（统计不显著，但SHAP稳定频率高）：IADL\_Medication（服药管理能力，93\%）、Activity\_Total（综合活动量，87\%）、ADL\_Total（基本活动量，74\%）。这三项活动能力指标虽未达到统计显著性，但在100次Bootstrap中保持较高的SHAP重要性，提示其可能通过与血脂代谢的非线性交互来提供辅助预测价值，在无血脂检验条件时可作为生活方式评估的参考依据。
+
+\subsection{本节小结}
+
+\textbf{本节关键发现如下：}
+
+第一，TC（总胆固醇）和TG（甘油三酯）是高血脂症风险预警最有力的两个指标，获得统计、线性和非线性三重最高评级，在100次Bootstrap稳定性选择中出现频率均达100\%，在XGBoost SHAP中贡献值遥遥领先。
+
+第二，XGBoost在OOF评估中达到AUC = 0.998，接近完美判别，证明TC/TG等指标与高血脂症标签之间存在极强的非线性可分关系。这一高性能同时说明本数据集的高血脂症标签可能主要依据血脂指标的临床参考区间判定，模型几乎完美地学到了这一判定规则。
+
+第三，血尿酸作为嘌呤代谢终产物，在控制血脂指标后仍保持统计显著的独立正向关联（$r_s = 0.204$，FDR-P = $4.7\times10^{-10}$，L1系数 = 0.40），提示尿酸代谢异常与脂代谢紊乱之间存在独立的病理联系，这与近年来高尿酸血症和代谢综合征之间关联的研究结论相符。
+
+
+%% ============================================================
+%% 第六章：问题一（B）九种体质对高血脂风险的差异贡献
+%% ============================================================
+\section{问题一（B）：九种体质对高血脂风险的差异贡献}
+
+\subsection{建模思路与方法选择}
+
+本子任务的核心问题是：\textbf{在控制年龄、性别、吸烟、饮酒等混杂因素之后，九种中医体质积分对高血脂症风险的贡献是否存在显著差异？哪种体质的风险促进或保护效应最强？}
+
+这是一个典型的\textbf{因果推断与预测混合问题}，需要从两个维度同时给出证据：
+
+\begin{itemize}
+  \item \textbf{统计推断维度（因果/相关推断）}：多变量Logistic回归，控制混杂因素后估计每种体质积分的偏效应（OR及其95\%置信区间），并进行统计显著性检验。这是频率主义统计检验的标准范式。
+  \item \textbf{机器学习可解释性维度（预测贡献排序）}：XGBoost + SHAP，输出每种体质在高血脂预测任务中的边际贡献大小排序，补充线性模型无法捕捉的非线性交互信息。
+  \item \textbf{人群异质性分析维度}：分层SHAP分析（按性别×年龄组），揭示体质效应在不同亚群中的异质性。
+\end{itemize}
+
+三种方法相互印证，既提供了标准的统计推断证据（Logistic回归），又捕捉了可能的非线性效应（XGBoost），同时还识别了人群异质性（分层SHAP），从而形成多角度、高可信度的综合结论。
+
+\subsection{方法A：多变量Logistic回归（统计推断）}
+
+在同一Logistic回归模型中，将九种体质积分和混杂因素同时纳入，建立如下多变量模型：
+
+\begin{equation}
+\log\frac{P(\text{HLD}=1 \mid \mathbf{C}, \mathbf{Z})}{P(\text{HLD}=0 \mid \mathbf{C}, \mathbf{Z})} = \beta_0 + \sum_{k=1}^{9}\beta_k C_k^* + \sum_{j \in \mathcal{J}}\gamma_j Z_j^*
+\label{eq:logit_constitution}
+\end{equation}
+
+其中：$C_k^*$为第$k$种体质积分的Z-score标准化值（$k = 1, \ldots, 9$，对应九种体质）；$Z_j^*$为混杂因素的标准化值，包括年龄组（5级别，虚拟变量编码）、性别（男/女二元）、吸烟史（是/否）、饮酒史（是/否）、BMI、空腹血糖和血尿酸（连续变量，Z-score标准化）。
+
+每种体质的偏效应通过优势比（Odds Ratio, OR）量化：
+
+\begin{equation}
+\text{OR}_k = e^{\hat{\beta}_k}
+\label{eq:or}
+\end{equation}
+
+其含义为：在控制其他所有体质积分和混杂因素不变的情况下，体质$k$的积分每增加1个标准差，高血脂症发病风险变为原来的$\text{OR}_k$倍。OR > 1表示该体质积分升高与高血脂风险升高相关（风险促进），OR < 1表示保护效应（风险降低）。
+
+优势比的95\%置信区间通过参数Bootstrap或正态近似计算：
+
+\begin{equation}
+\text{95\%CI}(\text{OR}_k) = \left[\exp\!\left(\hat{\beta}_k - 1.96\, \widehat{\text{SE}}(\hat{\beta}_k)\right),\ \exp\!\left(\hat{\beta}_k + 1.96\, \widehat{\text{SE}}(\hat{\beta}_k)\right)\right]
+\label{eq:ci_or}
+\end{equation}
+
+模型整体显著性检验结果：似然比检验P < 0.001，McFadden伪$R^2 = 0.039$（说明九种体质+混杂因素合并对高血脂症具有一定但有限的解释力）。
+
+九种体质的OR估计结果如表\ref{tab:constitution_or}所示。
+
+\begin{table}[H]
+\centering
+\caption{九种体质对高血脂风险的Logistic回归结果（OR及95\%CI，控制混杂因素后）}
+\label{tab:constitution_or}
+\begin{tabular}{lllllll}
+\toprule
+体质（英文） & 体质（中文） & OR & 95\% CI & P值 & SHAP排名 & 风险角色 \\
+\midrule
+QiDeficiency     & 气虚质 & \textbf{1.124} & (0.959, 1.318) & 0.149 & 1 & 风险促进 \\
+YangDeficiency   & 阳虚质 & 1.036          & (0.883, 1.214) & 0.666 & 2 & 风险促进 \\
+Balanced         & 平和质 & 1.074          & (0.901, 1.281) & 0.424 & 3 & 风险促进 \\
+DampHeat         & 湿热质 & 0.942          & (0.805, 1.104) & 0.463 & 4 & 相对保护 \\
+YinDeficiency    & 阴虚质 & 0.978          & (0.834, 1.146) & 0.784 & 5 & 相对保护 \\
+BloodStasis      & 血瘀质 & 0.952          & (0.812, 1.116) & 0.543 & 6 & 相对保护 \\
+SpecialIntrinsic & 特禀质 & 0.955          & (0.816, 1.119) & 0.570 & 7 & 相对保护 \\
+QiStagnation     & 气郁质 & 1.032          & (0.880, 1.209) & 0.700 & 8 & 风险促进 \\
+\textbf{PhlegmDampness} & \textbf{痰湿质} & \textbf{0.996} & (0.848, 1.168) & \textbf{0.957} & 9 & 中性 \\
+\midrule
+（参照）& \textbf{血尿酸} & \textbf{1.508} & (1.252, 1.817) & \textbf{<0.001} & — & 独立危险因素 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+从表\ref{tab:constitution_or}可以观察到以下重要模式：\textbf{所有九种体质在控制混杂因素后均未达到统计显著性}（所有P > 0.10），且所有体质的95\%置信区间均跨越1.0（即包含无效值），说明我们无法从本数据中获得体质积分对高血脂风险具有统计显著的直接效应的证据。与此形成鲜明对比的是，\textbf{血尿酸}作为模型中的连续混杂协变量，OR = 1.508（P < 0.001），95\%CI为(1.252, 1.817)，是模型中唯一达到统计显著性的预测因子，且此效应在控制九种体质积分和其他混杂因素后依然稳健。
+
+\textbf{痰湿质}的OR几乎精确等于1.00（OR = 0.996，P = 0.957），意味着在控制其他体质和混杂因素后，痰湿质积分的升高对高血脂症风险几乎没有任何独立的直接贡献。这一结果看似出人意料（中医理论认为痰湿与脂代谢关系最为密切），但可以从"中介效应"的角度加以理解：痰湿体质的高血脂风险可能主要\textbf{通过其对血脂代谢指标（TG、TC等）的影响来间接实现}，而当模型中同时控制了血脂相关的混杂因素时，痰湿质的这部分间接效应就被"阻断"了，导致残余直接效应接近于零。
+
+\subsection{方法B：XGBoost + SHAP（机器学习可解释性）}
+
+将九种体质积分联合混杂因素（但\textbf{不包含}TC/TG/LDL-C/HDL-C血脂指标，以免血脂指标主导SHAP而掩盖体质贡献）输入XGBoost分类器，5折交叉验证AUC = $0.884 \pm 0.021$。这一AUC值说明：\textbf{仅凭九种体质积分和基本人口学/代谢指标，可以以约88.4\%的概率正确区分高血脂症患者与非患者}，这一预测能力并不弱，提示体质信息对高血脂风险具有可观的非线性判别价值。
+
+图\ref{fig:constitution_contribution}展示了九种体质OR森林图（左）和SHAP贡献排序（右）的对比。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.90\textwidth]{outputs/Fig3_ConstitutionContribution.png}
+\caption{九种体质对高血脂风险的贡献：左图为Logistic回归OR森林图（OR > 1（风险促进）显示为红色，OR < 1（相对保护）显示为绿色；所有95\%CI均跨越1.0，说明无体质达到统计显著性）；右图为XGBoost SHAP贡献排序条形图（气虚质SHAP排名第1，阳虚质第2）。}
+\label{fig:constitution_contribution}
+\end{figure}
+
+SHAP分析的结果揭示了Logistic OR看不到的非线性重要性排序：\textbf{气虚质}（$\bar{\phi}$排名第1）和\textbf{阳虚质}（排名第2）在XGBoost非线性模型中的SHAP贡献最大，提示这两种体质可能通过非线性或交互路径对高血脂风险产生影响，而这种影响在线性Logistic回归中被部分稀释。
+
+\subsection{方法C：分层SHAP分析——人群异质性}
+
+为进一步探索体质效应是否因性别或年龄而异，我们对五个年龄组（AgeGroup 1--5）和两种性别分别独立拟合XGBoost模型，并比较各子群中九种体质的SHAP重要性。图\ref{fig:stratified_shap}展示了分层SHAP热图。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{outputs/Fig6_StratifiedSHAP.png}
+\caption{分层SHAP热图：不同性别与年龄组中九种体质对高血脂风险的SHAP贡献（颜色深度代表平均$|\text{SHAP}|$值大小）。热图揭示体质效应具有明显的年龄依赖性和性别差异。}
+\label{fig:stratified_shap}
+\end{figure}
+
+分层分析揭示了三个重要的异质性规律：
+
+\textbf{（1）气虚质的跨组稳定性}：气虚质在男性和女性两个子群中均保持SHAP排名第1，说明其作为最强风险关联体质的地位具有较好的跨性别稳定性。
+
+\textbf{（2）年龄依赖性效应}：在年轻年龄组（AgeGroup=1）中，阴虚质的SHAP贡献相对较高（可能与年轻人阴虚火旺引起代谢加速有关）；而在老年组（AgeGroup=5）中，平和质（基础代谢平衡）和血瘀质（微循环障碍）的SHAP贡献上升（可能与老年人代谢调节功能减退、循环系统老化有关）。
+
+\textbf{（3）痰湿质的性别差异}：痰湿质在男性群体中的SHAP排名略高于女性，可能与男性痰湿体质更倾向于内脏脂肪堆积（向心性肥胖）有关，但差异程度有限。
+
+\subsection{本节小结}
+
+\textbf{本节综合Logistic回归和XGBoost+SHAP的双重证据，得出以下结论：}
+
+第一，在控制年龄、性别、吸烟、饮酒、BMI、血糖、血尿酸七个混杂因素后，\textbf{九种中医体质积分对高血脂症均无统计显著的直接效应}（所有P > 0.10，所有95\%CI跨越1.0）。这一结果提示体质对高血脂风险的影响可能主要以"间接效应（中介效应）"的形式存在，即体质通过影响血脂代谢（TC、TG等）来间接影响高血脂症风险，而非独立地直接决定发病。
+
+第二，\textbf{气虚质}（OR = 1.124，SHAP排名第1）是在OR和SHAP双重证据中均呈现最强风险促进倾向的体质；\textbf{湿热质、血瘀质、特禀质}（OR < 0.96）表现出相对保护效应，但均不显著。
+
+第三，\textbf{血尿酸}是本模型中唯一达到统计显著性的独立预测因子（OR = 1.508，P < 0.001），其效应在控制九种体质和其他混杂因素后依然稳健，提示血尿酸代谢紊乱与高血脂风险之间存在独立的、不依赖于中医体质分类的病理机制。
+
+第四，体质对高血脂风险的影响存在\textbf{年龄依赖性}：在不同年龄组中，领先体质的排名和贡献大小存在差异，提示个体化的体质干预策略应当结合年龄因素进行分层设计。
+
+
+%% ============================================================
+%% 第七章：问题二——三级高血脂风险预警模型
+%% ============================================================
+\section{问题二：三级高血脂风险预警模型}
+
+\subsection{建模框架设计思路}
+
+问题二的核心目标是：构建一个可以在\textbf{不依赖血脂检验结果}的早筛场景下，或在\textbf{综合运用所有可用信息}的完整场景下，将人群分为低、中、高三个风险等级，并给出可操作的临床阈值规则的预警系统。
+
+为什么需要三级而非二级分层？二级分层（高风险/低风险）虽然最为简单，但在临床实践中往往过于粗糙，无法指导差异化的干预措施。三级分层允许对中风险人群单独制定"监测和生活方式干预"方案，对高风险人群推荐"立即医学干预"，对低风险人群仅需"定期随访"，更符合分层干预的医学伦理原则。
+
+为什么设计复合评分而非单一模型？单一机器学习模型（如XGBoost）虽然预测性能强，但缺乏临床可解释性，医生难以理解"为什么这个人是高风险"。复合评分方案将风险总分分解为\textbf{四个独立可解释的组件}（早筛模型概率、痰湿分层、活动能力分层、血脂异常计数），每个组件都有清晰的临床含义和独立的阈值，使得医生可以直观理解和解释每个患者的风险构成。
+
+整体框架的复合评分公式如下：
+
+\begin{equation}
+S_i = W_A \cdot P_{\text{screen},i} + W_B \cdot T_{\text{phlegm},i} + W_C \cdot T_{\text{activity},i} + W_D \cdot T_{\text{lipid},i}
+\label{eq:composite}
+\end{equation}
+
+其中各组件的含义将在后续各小节中逐一详细说明。
+
+\subsection{Stage-A：早筛模型（无血脂指标）}
+
+\subsubsection{模型设计与防数据泄露工程实践}
+
+Stage-A早筛模型的目标是：\textbf{仅使用非血脂类指标}（活动能力量表、体质积分、人口学变量、代谢指标等），训练一个能够预测高血脂症概率的分类器，模拟"在没有血液检验条件的社区场景下"进行风险初筛。
+
+模型选择XGBoost（300棵树，学习率0.05，最大深度4）并配合Platt Sigmoid校准，以保证输出的概率$P_{\text{screen}} \in [0, 1]$在统计上是良好校准的（即预测为70\%概率的人群中，真实发病率确实接近70\%）。
+
+关键工程设计是将\texttt{StandardScaler}（标准化器）和校准后的分类器封装在同一个\texttt{sklearn.Pipeline}中，确保在交叉验证的每一折中，\textbf{标准化参数（均值和标准差）仅在训练折内估计，然后应用于验证折}，从而严格防止验证折信息泄露至训练过程（一个常见的数据泄露错误）：
+
+\begin{equation}
+\text{Pipeline} = \bigl[\,\text{StandardScaler}(\hat{\mu}_{\text{train}},\hat{\sigma}_{\text{train}})\,\bigr] \circ \bigl[\,\text{CalibratedClassifierCV(XGBoost)}\,\bigr]
+\label{eq:pipeline}
+\end{equation}
+
+5折分层交叉验证生成全数据集的OOF概率$P_{\text{screen},i}$，汇报OOF AUC = \textbf{0.881}（95\%CI：[0.853, 0.914]）。这意味着：在完全不依赖任何血脂检验数据的情况下，仅凭活动能力、体质积分和基本代谢指标，模型能够以88.1\%的概率正确区分高血脂症患者，这为无条件医疗资源地区提供了可行的初筛工具。
+
+\subsection{Excess-AUC方法：数据驱动权重推导}
+
+传统复合评分模型通常由领域专家主观指定各组件的权重（如"痰湿积分权重25分，血脂权重15分"），这种做法带来明显的主观性和不一致性风险。本文提出\textbf{Excess-AUC（超额AUC）方法}，将各组件对高血脂症的判别能力客观量化为权重，实现\textbf{数据驱动的客观权重推导}。
+
+\textbf{方法原理}：AUC = 0.5代表随机猜测（无判别能力），AUC = 1.0代表完美判别。因此，各组件"超出随机猜测"的有效判别能力（Excess-AUC）为$\max(\text{AUC}_k - 0.5,\, \epsilon)$，其中$\epsilon = 10^{-6}$为防止除以零的微小量。各组件权重正比于其Excess-AUC：
+
+\begin{equation}
+W_k = \frac{\max(\text{AUC}_k - 0.5,\, \epsilon)}{\displaystyle\sum_{k'} \max(\text{AUC}_{k'} - 0.5,\, \epsilon)} \times 100, \quad k \in \{A, B, C, D\}
+\label{eq:excess_auc}
+\end{equation}
+
+对四个组件分别计算其对高血脂症标签$y$的个体AUC，结果如表\ref{tab:weights}所示。
+
+\begin{table}[H]
+\centering
+\caption{四组件Excess-AUC数据驱动权重推导结果}
+\label{tab:weights}
+\begin{tabular}{llllll}
+\toprule
+组件 & 含义 & 个体AUC & Excess-AUC & 主观权重（旧） & 数据驱动权重（新） \\
+\midrule
+$W_A$：$P_{\text{screen}}$ & 早筛模型概率 & 0.881 & 0.381 & 40 & \textbf{43.3} \\
+$W_B$：$T_{\text{phlegm}}$ & 痰湿质分层得分 & 0.495 & $\approx 0$ & 25 & $\approx$\textbf{0} \\
+$W_C$：$T_{\text{activity}}$ & 活动量分层得分 & 0.485 & $\approx 0$ & 20 & $\approx$\textbf{0} \\
+$W_D$：$T_{\text{lipid}}$ & 血脂异常计数得分 & 1.000 & 0.500 & 15 & \textbf{56.7} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+数据驱动结果揭示了一个值得深思的现象：痰湿质分层得分（AUC = 0.495）和活动量分层得分（AUC = 0.485）的个体AUC均低于0.5，这意味着这两个组件在本样本中\textbf{几乎没有对高血脂症的独立判别能力}，因此Excess-AUC权重被分配为接近零。这不是模型缺陷，而是本样本的真实统计特征的如实反映——在高患病率（79.3\%）样本中，血脂指标本身已高度可分，痰湿/活动量的补充价值有限。在低患病率的前瞻性预防场景中，这一权重分配会有所不同。
+
+血脂异常计数得分的个体AUC = 1.000，即血脂异常数量可以完美区分本样本的高血脂症状态，这与高血脂症的诊断标准直接基于血脂参考区间高度一致。
+
+\subsection{Tier函数设计：痰湿与活动量的分层量化}
+
+尽管痰湿质和活动量在本样本中的Excess-AUC权重接近零，我们仍然保留了它们作为\textbf{临床分层参考组件}，原因在于：（1）在无血脂数据的初筛场景下，这两个组件提供了唯一可用的量化信息；（2）在结合核心特征组合分析时，痰湿高分+低活动的组合对血脂异常人群具有独特的分层能力。
+
+痰湿质分层Tier函数的设计依据中华中医药学会标准ZYYXH/T157-2009的四级分层规范（$<40$分=无痰湿体质倾向；40--60分=倾向型；60--80分=典型型；$\geq 80$分=严重型）：
+
+\begin{equation}
+T_{\text{phlegm}}(v) = \begin{cases}
+0.00 & v < 40 \\
+0.33 & 40 \leq v < 60 \\
+0.67 & 60 \leq v < 80 \\
+1.00 & v \geq 80
+\end{cases}
+\label{eq:tier_phlegm}
+\end{equation}
+
+活动量Tier函数的设计依据ADL/IADL功能限制的临床分级标准（综合活动量表总分$\geq 70$分=功能完整，55--70分=轻度受限，40--55分=中度受限，$<40$分=重度受限），且\textbf{活动量越低代表风险越高}（方向取反）：
+
+\begin{equation}
+T_{\text{activity}}(v) = \begin{cases}
+0.00 & v \geq 70 \\
+0.33 & 55 \leq v < 70 \\
+0.67 & 40 \leq v < 55 \\
+1.00 & v < 40
+\end{cases}
+\label{eq:tier_activity}
+\end{equation}
+
+血脂异常计数Tier函数为线性归一化：
+
+\begin{equation}
+T_{\text{lipid}}(c) = \min(c,\, 4) / 4, \quad c = \text{LipidAbnormalCount} \in \{0, 1, 2, 3, 4\}
+\label{eq:tier_lipid}
+\end{equation}
+
+\subsection{数据驱动切点与三级分层}
+
+三级风险标签的划分采用复合评分的\textbf{数据驱动分位切点}，分别取第33百分位（$Q_{33}$）和第67百分位（$Q_{67}$）作为低/中和中/高的分界：
+
+\begin{equation}
+\text{RiskLevel}(s) = \begin{cases}
+\text{低风险（Low）}   & s < Q_{33}(S) \\
+\text{中风险（Medium）}& Q_{33}(S) \leq s < Q_{67}(S) \\
+\text{高风险（High）}  & s \geq Q_{67}(S)
+\end{cases}
+\label{eq:risklevel}
+\end{equation}
+
+使用分位切点而非主观切点的优势在于：自动适应不同样本的评分分布，保证三个风险级别各约占三分之一的样本量，避免某一级别样本量极少导致统计估计不稳定。
+
+\textbf{二值化阈值（PD\_HIGH和ACT\_LOW）}的确定也采用数据优先、临床标准兜底的双重策略：
+
+\begin{equation}
+\text{PD\_HIGH} = \begin{cases}
+\arg\max_{v} J_{\text{ROC}}(v) & \text{若 } J_{\max} \geq 0.10 \\
+60 & \text{否则（ZYYXH/T157-2009兜底）}
+\end{cases}
+\label{eq:pd_high}
+\end{equation}
+
+在本数据中，痰湿质积分对高血脂标签的Youden J = 0.053 < 0.10，故\textbf{PD\_HIGH = 60}（采用临床标准中"典型痰湿"的起始切点）；活动量的Youden J = 0.023 < 0.10，故\textbf{ACT\_LOW = 40}（采用ADL临床标准中"重度受限"的起始切点）。
+
+\subsection{三级分层结果}
+
+三级风险分层的描述性统计如表\ref{tab:risk_strata}所示，图\ref{fig:risk_calibration}展示了评分分布和早筛模型校准曲线。
+
+\begin{table}[H]
+\centering
+\caption{三级风险分层结果：样本量、HLD患病率和CompositeScore分布}
+\label{tab:risk_strata}
+\begin{tabular}{lllll}
+\toprule
+风险级别 & 样本量（N） & HLD患病率 & CompositeScore区间 & 分布中位数 \\
+\midrule
+低风险（Low）   & 329 & 37.1\%  & [8.8,\ 52.0)  & 29.7 \\
+中风险（Medium）& 340 & 100.0\% & [52.0,\ 67.6) & 54.9 \\
+高风险（High）  & 331 & 100.0\% & [67.6,\ 97.9] & 69.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+三级分层结果具有非常清晰的临床意义：中风险和高风险组的HLD患病率均为100\%，说明所有进入这两个风险级别的样本实际上都已经是高血脂症患者；低风险组的HLD患病率为37.1\%，仍有较高的患病率，这与本样本的总体高患病率（79.3\%）背景下，评分最低的三分之一人群的预期相符。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{outputs/Fig7_RiskScore_Calibration.png}
+\caption{三级风险CompositeScore分布（左）与Stage-A早筛模型校准曲线（右）。左图：三组的评分分布，竖黑虚线为数据驱动切点（$Q_{33} = 52.0$，$Q_{67} = 67.6$）；右图：校准曲线显示预测概率与实际HLD发生率之间的对应关系（接近理想对角线表示良好校准），校准曲线整体接近但略低于完美校准，属于可接受范围。}
+\label{fig:risk_calibration}
+\end{figure}
+
+\subsection{临床可操作阈值规则}
+
+基于三级分层结果，制定以下临床可直接执行的阈值规则（表\ref{tab:clinical_rules}）：
+
+\begin{table}[H]
+\centering
+\caption{三级风险临床阈值规则（基于血脂参考区间、痰湿积分和活动量评级）}
+\label{tab:clinical_rules}
+\begin{tabular}{ll}
+\toprule
+风险级别 & 临床阈值规则 \\
+\midrule
+\textbf{低风险} & TC $\leq$ 6.20 且 TG $\leq$ 1.70（血脂均正常）\\
+& 且 痰湿质积分 $<$ 60 且 活动量总分 $\geq$ 55 \\
+\midrule
+\textbf{中风险} & 单项血脂异常（TC $>$ 6.2 OR TG $>$ 1.7 OR LDL-C $>$ 3.1 OR HDL-C $<$ 1.04）\\
+& 或（痰湿质60--80分 AND 综合活动量40--70分） \\
+\midrule
+\textbf{高风险} & $\geq$2项血脂指标异常 \\
+& OR（TC $>$ 6.2 且 痰湿质 $\geq$ 60）\\
+& OR（TG $>$ 1.7 且 活动量 $<$ 40）\\
+& OR（痰湿质 $\geq$ 80 且 活动量 $<$ 40） \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{核心特征组合分析}
+
+将"痰湿高风险"（痰湿质积分$\geq$ 60）、"低活动能力"（活动量总分$<$ 40）和"血脂异常"（LipidAbnormalCount $\geq$ 1）三个二值化特征进行全组合（$2^3 = 8$种），分析各组合的HLD患病率和高风险率，结果如表\ref{tab:core_combos}所示。
+
+\begin{table}[H]
+\centering
+\caption{核心特征三重组合分析（8种组合的HLD患病率和高风险率）}
+\label{tab:core_combos}
+\begin{tabular}{lllll}
+\toprule
+组合特征（痰湿高分·低活动·血脂异常） & N & 占比 & HLD患病率 & 高风险率 \\
+\midrule
+三者均无（None）           & 142 & 14.2\% & 0\%    & 0\%    \\
+仅血脂异常                 & 577 & 57.7\% & 100\%  & 40.7\% \\
+仅低活动                   & —   & —      & —      & —      \\
+仅痰湿高分                 & —   & —      & —      & —      \\
+痰湿高分 + 血脂异常        &  87 &  8.7\% & 100\%  & 32.2\% \\
+低活动 + 血脂异常          & 106 & 10.6\% & 100\%  & 50.9\% \\
+\textbf{三重核心组合（全三者）}& \textbf{23} & \textbf{2.3\%} & \textbf{100\%} & \textbf{60.9\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+图\ref{fig:core_combinations}和图\ref{fig:shap_subgroup}分别展示了核心组合分析的可视化结果和子组SHAP比较。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{outputs/Fig8_CoreCombinations.png}
+\caption{核心特征组合HLD患病率（左）与三级风险组成（右）。左图：横条图展示各组合的HLD患病率，颜色深度对应高风险程度；右图：堆叠条形图展示每种组合的低/中/高风险比例，三重核心组合的高风险率（60.9\%，深色区域最大）显著高于仅血脂异常组（40.7\%），证明痰湿+低活动可以在血脂异常人群中进一步区分更高风险个体。}
+\label{fig:core_combinations}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{outputs/Fig9_SHAP_FullVsSubgroup.png}
+\caption{SHAP特征重要性对比：全样本（左）vs 痰湿高风险子组（痰湿质$\geq$ 60，右）。在痰湿高风险子组中，特征重要性排序发生了变化：活动能力相关指标（ADL/IADL）的SHAP贡献相对上升，血尿酸的排名也有所提升，提示在痰湿质较高的人群中，高血脂症的风险机制可能更多涉及活动能力和尿酸代谢的协同作用，而非仅仅由血脂指标决定。}
+\label{fig:shap_subgroup}
+\end{figure}
+
+图\ref{fig:score_components}展示了三个风险级别中各评分组件均值的对比。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{outputs/Fig10_ScoreComponents.png}
+\caption{三级风险各评分组件均值对比。高风险组的$T_{\text{lipid}}$分量显著高于其他两组，而$P_{\text{screen}}$（早筛概率）在高风险组中也明显较高；$T_{\text{phlegm}}$和$T_{\text{activity}}$在三组之间差异较小，与其Excess-AUC权重接近零的数据驱动结论相符。}
+\label{fig:score_components}
+\end{figure}
+
+\subsection{本节小结}
+
+\textbf{问题二的核心建模结果总结如下：}
+
+第一，Stage-A早筛模型（仅使用非血脂指标）在5折分层交叉验证中OOF AUC = 0.881（95\%CI：[0.853, 0.914]），证明在没有血脂检验条件的初筛场景下，依靠活动能力量表、体质积分和代谢指标可以实现有效的高血脂症风险筛查。
+
+第二，Excess-AUC数据驱动权重方法揭示：血脂异常计数组件权重为56.7\%、早筛模型权重为43.3\%，而痰湿质和活动量权重在本高患病率样本中接近零——这是对本数据统计特征的如实反映，而非意味着这两个因素在临床上无意义。
+
+第三，三级分层的临床意义清晰：高风险和中风险组HLD患病率均为100\%，低风险组为37.1\%。高风险对应临床须积极干预人群，中风险对应监测与生活方式管理人群，低风险对应定期随访人群。
+
+第四，\textbf{核心三重组合}（痰湿质积分$\geq 60$ + 综合活动量$< 40$ + 存在血脂异常）虽然仅占全样本的2.3\%（23例），但高风险率高达60.9\%，显著高于单纯血脂异常组（40.7\%）。这一发现证明痰湿体质+低活动能力的叠加效应可以在血脂异常人群中进一步筛选出更高风险的个体，为临床的精准分层干预提供了重要参考。
+
+
+%% ============================================================
+%% 第八章：灵敏度分析与鲁棒性检验
+%% ============================================================
+\section{灵敏度分析与鲁棒性检验}
+
+\subsection{分析目的与意义}
+
+一个科学严谨的预警模型不仅需要展示其在原始数据上的性能，更需要证明其结论对\textbf{参数扰动}和\textbf{随机抽样波动}具有足够的稳健性。如果模型的结论（如风险级别分配、关键特征排序）在参数或数据发生合理变化时大幅改变，则该模型的可靠性值得质疑，无法在临床实践中推广应用。
+
+本研究从以下三个维度对三级预警模型开展系统的灵敏度分析与鲁棒性检验：
+
+\begin{enumerate}[label=(\arabic*)]
+\item \textbf{权重扰动灵敏度}：评估当Excess-AUC推导的各组件权重在±10\%至±30\%范围内偏离时，风险级别分配（低/中/高）的稳定性。这个分析回答的问题是："如果我们对权重的估计存在误差，模型输出会有多大变化？"
+\item \textbf{切点百分位灵敏度}：评估当低/中分界切点和中/高分界切点在合理范围内变化时，高风险组的HLD患病率（纯度）和整体分层结果的稳定性。这个分析回答的问题是："切点是否是决定模型有效性的关键脆弱点？"
+\item \textbf{Bootstrap模型稳定性}：通过200次有放回抽样评估Stage-A早筛模型的AUC分布，获得更可靠的不确定性估计。
+\end{enumerate}
+
+\subsection{权重扰动灵敏度分析}
+
+\subsubsection{分析方案}
+
+对每个组件的权重$w_k^{\text{base}}$分别施加相对扰动$\delta \in \{-30\%, -20\%, -10\%, +10\%, +20\%, +30\%\}$，得到扰动后的权重：
+
+\begin{equation}
+w_k^{\text{new}} = w_k^{\text{base}} \cdot (1 + \delta)
+\label{eq:weight_perturb}
+\end{equation}
+
+然后对所有权重重新归一化，保持总权重不变：
+
+\begin{equation}
+\mathbf{w}^{\text{new}} \leftarrow \frac{\mathbf{w}^{\text{new}}}{\displaystyle\sum_{k'} w_{k'}^{\text{new}}} \times 100
+\label{eq:weight_renorm}
+\end{equation}
+
+以扰动后的权重重新计算复合评分（公式\ref{eq:composite}），并在相同的分位切点下生成新的风险级别标签。统计与原始标签（基线）发生级别变化的样本比例：
+
+\begin{equation}
+\text{ChangeRate} = \frac{1}{N}\sum_{i=1}^{N}\mathbf{1}\!\left[\text{RiskLevel}_i^{\text{new}} \neq \text{RiskLevel}_i^{\text{base}}\right] \times 100\%
+\label{eq:change_rate}
+\end{equation}
+
+\subsubsection{分析结果}
+
+图\ref{fig:weight_sensitivity}展示了各组件权重扰动对风险级别变化率的影响。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{outputs/Fig11_WeightSensitivity.png}
+\caption{各组件权重扰动灵敏度分析结果。纵轴为风险级别变化率（\%），横轴为扰动幅度（$\delta$）。Screen组件（早筛模型，$W_A = 43.3$）和Lipid组件（血脂异常，$W_D = 56.7$）对应曲线在$\delta = \pm 30\%$时最大变化率分别为3.2\%和3.4\%；Phlegm（痰湿质，$W_B \approx 0$）和Activity（活动量，$W_C \approx 0$）组件的曲线几乎与零重合，任意扰动均不引起级别变化。}
+\label{fig:weight_sensitivity}
+\end{figure}
+
+关键结论：在所有组件的权重扰动$\pm 30\%$的情况下，风险级别变化率均不超过\textbf{3.4\%}，即1000例样本中最多只有34例发生级别变化。这一结果强烈支持模型对权重选择具有\textbf{高度稳健性}的结论。
+
+从机理上理解这一稳健性：由于复合评分$S$的分布与三级分位切点（$Q_{33}$和$Q_{67}$）之间存在较大的"安全距离"——即大多数样本的复合评分远离两个切点，不会因权重的小幅变化而发生"跨越切点"的级别变动，所以整体变化率保持在较低水平。只有少数处于切点附近"边界地带"的样本才会受到权重扰动的影响。
+
+\subsection{切点百分位灵敏度分析}
+
+\subsubsection{分析方案}
+
+对低/中分界百分位$p_{\text{lo}} \in \{20, 25, 30, 33, 40\}$和中/高分界百分位$p_{\text{hi}} \in \{60, 67, 70, 75, 80\}$的所有满足$p_{\text{lo}} < p_{\text{hi}}$的有效组合（共20种），计算：（1）相对基线（33/67分位切点）的级别变动率；（2）高风险组的HLD患病率。
+
+\begin{equation}
+\text{ChangeRate}(p_{\text{lo}}, p_{\text{hi}}) = \frac{1}{N}\sum_{i=1}^{N}\mathbf{1}\!\left[\text{RiskLevel}_i^{(p_{\text{lo}},p_{\text{hi}})} \neq \text{RiskLevel}_i^{(33,67)}\right] \times 100\%
+\label{eq:cutpoint_changerate}
+\end{equation}
+
+\subsubsection{分析结果}
+
+图\ref{fig:cutpoint_sensitivity}展示了切点灵敏度热图。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{outputs/Fig12_CutpointSensitivity.png}
+\caption{切点百分位灵敏度热图。左图：各切点组合相对于基线(33/67)的风险级别变动率（黄色框标注基线切点，变动率=0\%）；右图：各切点组合下高风险组HLD患病率（所有20个有效组合下均为100\%，以蓝色一致显示）。}
+\label{fig:cutpoint_sensitivity}
+\end{figure}
+
+灵敏度分析揭示了两个重要规律：
+
+\textbf{规律一：切点变化影响级别分布，但高风险组纯度不受影响。}在所有测试的20种切点组合下，高风险组的HLD患病率始终保持100\%，说明无论如何调整切点，被划入"高风险"区间的样本中，实际上100\%都是高血脂症患者。这是一个关于本数据分层质量的极其强烈的稳健性结论。
+
+\textbf{规律二：极端切点会导致较大的级别变动率，但推荐切点（33/67）在变动率和代表性之间取得最优平衡。}极端组合（如$p_{\text{lo}} = 20$，$p_{\text{hi}} = 80$）相对基线的级别变动率可达26\%，但此时三个组别的样本量极度不均衡（低风险仅20\%，中间区间60\%，高风险20\%）；而推荐的33/67切点保证了三个组别的样本量均约占三分之一，最具代表性。
+
+\subsection{Bootstrap模型稳定性检验}
+
+\subsubsection{分析方案}
+
+对原始数据进行$B = 200$次有放回Bootstrap抽样，每次在Bootstrap样本上以相同超参数拟合Stage-A XGBoost早筛模型，并在对应的Out-of-Bag（OOB）样本——即未被抽到的样本——上评估AUC：
+
+\begin{equation}
+\text{AUC}_{\text{Boot}} = \frac{1}{B}\sum_{b=1}^{B}\text{AUC}_{\text{OOB}}^{(b)}, \quad
+\text{95\%CI} = \left[\text{AUC}^{(2.5\text{th})},\, \text{AUC}^{(97.5\text{th})}\right]
+\label{eq:bootstrap_auc}
+\end{equation}
+
+OOB评估的优势在于：每次拟合所用的Bootstrap样本与评估样本（OOB）完全不重叠，因此是真正意义上的外样本评估，能够有效估计模型的泛化能力和不确定性。
+
+\subsubsection{分析结果}
+
+图\ref{fig:bootstrap_auc}展示了200次Bootstrap OOB AUC的分布。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{outputs/Fig13_BootstrapAUC.png}
+\caption{Stage-A早筛模型Bootstrap稳定性分析（200次重采样OOB AUC）。左图：AUC直方图，均值=0.884（黑实线），95\%CI=[0.853, 0.914]（红虚线），OOF基线AUC=0.881（橙虚线）；右图：200次排序AUC曲线及95\%CI带状区间。AUC分布高度集中（标准差=0.015），提示模型在不同数据抽样下均保持稳定的判别能力。}
+\label{fig:bootstrap_auc}
+\end{figure}
+
+Bootstrap结果：AUC均值 = 0.884，标准差 = 0.015，95\%置信区间 = [0.853, 0.914]。结果显示，200次Bootstrap OOB AUC的分布非常集中，绝大多数结果在0.85--0.91范围内，没有出现AUC大幅下降（如低于0.80）的情况，证明早筛模型的性能估计具有\textbf{高度可重复性}，不依赖于特定的数据子集，具有良好的外推泛化能力。
+
+\subsection{灵敏度分析综合结论}
+
+三类灵敏度检验的结果汇总如表\ref{tab:sensitivity_summary}所示。
+
+\begin{table}[H]
+\centering
+\caption{灵敏度分析与鲁棒性检验综合结果}
+\label{tab:sensitivity_summary}
+\begin{tabular}{llll}
+\toprule
+分析维度 & 主要发现 & 最大波动幅度 & 稳健性评级 \\
+\midrule
+权重扰动（$\pm 30\%$） & 所有组件最大级别变化率 $\leq$ 3.4\% & 3.4\% & ★★★★★ 极稳健 \\
+切点百分位扰动 & 高风险组HLD患病率在所有切点下=100\% & 切点变化26\%，纯度不变 & ★★★★☆ 非常稳健 \\
+Bootstrap AUC & 95\%CI = [0.853, 0.914]，SD = 0.015 & $\pm$3\% & ★★★★☆ 非常稳健 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+综合来看，本研究所建立的三级预警模型展现出了优秀的稳健性：权重扰动对分层结果影响极小，切点扰动不影响高风险组的绝对纯度，早筛模型的AUC分布集中且可信区间窄。这三项稳健性验证表明模型的主要结论（高风险组=血脂异常必要条件，痰湿+低活动可进一步分层）是\textbf{稳定可靠的}，不依赖于特定的参数设置或样本子集。
+
+%% ============================================================
+%% 第九章：模型评价、改进与推广
+%% ============================================================
+\section{模型评价、改进与推广}
+
+\subsection{模型综合评价}
+
+本研究在方法选择和建模设计上具有以下几方面的核心优势：
+
+\textbf{（1）双重证据体系：}同时采用频率主义统计推断（Spearman相关、FDR校正、Logistic OR）和机器学习可解释性（XGBoost SHAP）两套证据体系，相互印证、相互补充，避免了单一方法可能带来的偏差。
+
+\textbf{（2）防泄露工程设计：}在交叉验证中严格使用Pipeline封装预处理步骤，确保标准化参数不从验证折中获取，使性能评估更接近真实的外样本泛化能力。
+
+\textbf{（3）稳定性优先原则：}通过100次Bootstrap稳定性选择筛选最终关键指标集，避免了因单次建模的随机性而造成的特征选择不稳定问题，大幅提高了结论的可重复性。
+
+\textbf{（4）数据驱动权重：}采用Excess-AUC客观推导各组件权重，比主观经验赋权更科学，且权重推导过程完全透明可重现。
+
+\textbf{（5）临床可操作性：}三级预警模型最终输出的是清晰的\textbf{临床阈值规则}（如"TC > 6.2且痰湿 $\geq$ 60 = 高风险"），而非黑盒模型输出，医生可以直接理解、执行和向患者解释风险判定的理由。
+
+然而，本研究也存在以下几点局限性：
+
+\textbf{局限性一：横断面数据限制因果推断。}本研究所有分析均基于横断面（一次性）调查数据，无法建立时间上的先后关系，因此所有"关联性"结论无法直接解读为"因果效应"。例如，"气虚质积分高→高血脂风险高"这一统计关联，可能是气虚质体质导致了高血脂（正向因果），也可能是高血脂导致了人体呈现气虚质（反向因果），或两者同时受共同原因影响（混杂因果）。
+
+\textbf{局限性二：痰湿积分的预测能力严重受限。}$R^2 \approx 0$表明现有特征池无法量化痰湿体质的严重程度，这对未来试图用客观生化指标"替代"或"验证"中医辨证积分的研究提出了挑战。
+
+\textbf{局限性三：高患病率样本可能遮蔽体质效应。}本样本HLD患病率79.3\%，远高于一般社区人群（~40\%）。在如此高患病率背景下，血脂指标的判别贡献极为主导，可能使体质积分的微弱差异效应无从显现，导致体质对高血脂的效应被低估。
+
+\textbf{局限性四：样本量限制分层分析功效。}1000例在整体建模中属于合理规模，但在分层分析（如按性别×年龄组×体质三维分层）时各子组样本量急剧下降，统计功效（检验真实效应的能力）显著降低。
+
+\subsection{改进方向}
+
+针对上述局限性，提出以下具体改进方向：
+
+\textbf{改进一：引入中医特色客观指标。}将舌苔厚腻程度（可通过图像识别AI量化）、脉象滑度（可通过脉诊仪量化）、皮肤油光程度（可通过皮肤测试仪量化）纳入特征池，有望突破"客观生化指标无法预测痰湿积分"的局限，实现痰湿严重度的客观量化评估。
+
+\textbf{改进二：开展纵向队列研究。}招募中医体质明确判定的健康（无高血脂）人群，跟踪随访5--10年，记录高血脂症的新发事件，构建\textbf{真正的预测模型}（而非现在的判别模型），并通过时间序列分析验证"体质→高血脂"的时序因果性。
+
+\textbf{改进三：进行中介分析。}运用Judd-Baron中介分析或基于结构方程模型（SEM）的中介分析框架，正式检验"痰湿质积分通过TG/TC中介对高血脂症产生间接效应"这一假说，量化中介效应的比例。
+
+\textbf{改进四：多中心数据验证。}在其他医院或地区招募样本，在\textbf{外部验证数据集}上评估本模型的泛化性能，以克服单一数据集的代表性局限。特别是在\textbf{低患病率社区筛查人群}中验证，以检验体质效应是否在不同患病率背景下具有一致性。
+
+\subsection{推广建议}
+
+本研究的方法论框架和主要发现具有以下几方面的实际推广价值：
+
+\textbf{推广场景一："无血脂化验"早筛版本。}在基层医疗机构（如社区卫生服务中心、乡镇卫生院）或偏远地区，Stage-A早筛模型可以仅凭常规查体信息（身高、体重、活动能力评估、中医体质辨证）提供高血脂症的初步风险筛查，对高风险人群发出"建议进行血液检验"的预警，节约医疗资源的同时提高筛查覆盖率。
+
+\textbf{推广场景二："有血脂数据"精筛版本。}在具备血液检验条件的医院或体检中心，可使用完整版复合评分模型（包含$T_{\text{lipid}}$组件），对已检测出血脂异常的人群进一步分层，识别"痰湿高分+低活动"叠加的核心三重高风险组合，制定差异化的干预方案（如：仅血脂异常者建议药物治疗+饮食控制；三重核心高风险者额外建议中医痰湿调理+运动康复方案）。
+
+\textbf{推广场景三：慢病风险预测平台。}将本框架嵌入电子健康档案（EHR）系统，实现患者就诊时的\textbf{自动实时风险评估}和分层标记，辅助临床医生快速识别高危人群并安排相应随访频率。
+
+\textbf{方法论推广：}"三阶段特征筛选框架 + Excess-AUC复合评分"的方法论可以泛化至其他慢性病风险评估场景（如糖尿病、高血压、骨质疏松等），特别适用于需要同时整合"中医辨证评分"和"客观生化检验"两类异质性特征的多维度风险建模场景。
+
+\section{综合结论}
+
+本研究以"中医体质--高血脂风险"为核心科学问题，系统运用统计方法和可解释机器学习技术，对1000例中老年人多维度数据进行了深度分析。主要结论归纳如下：
+
+\textbf{关于痰湿质严重度：}在本研究的特征池（血脂生化4项、代谢3项、ADL/IADL各5分项+总分）范围内，客观生化指标和活动能力评分无法有效预测痰湿质积分（$R^2 \approx 0$），这从现代数据科学角度验证了中医痰湿辨证体系的相对独立性，也指出了未来需要引入舌苔、脉象等中医特色客观指标的研究方向。
+
+\textbf{关于高血脂风险预警指标：}TC和TG是预警效能最强的一级关键指标（稳定频率100\%，L1系数最大，SHAP贡献最高，AUC = 0.998），血尿酸是最重要的独立危险代谢因素（OR = 1.51，P < 0.001），IADL服药管理能力和综合活动量是重要的二级指标（SHAP稳定频率分别为93\%和87\%）。
+
+\textbf{关于体质差异贡献：}九种体质对高血脂症的直接效应在多变量控制下均未达到统计显著性，体质可能通过代谢中介路径间接影响高血脂风险；气虚质在双重证据中均呈最强风险促进倾向；血尿酸是最稳定的独立预测因子；体质效应存在年龄依赖性异质性。
+
+\textbf{关于三级预警模型：}Stage-A早筛模型在无血脂数据的条件下AUC = 0.881，展现出可观的社区初筛价值；数据驱动权重客观量化了各组件的预测贡献；三级分层结果稳健可靠，高风险和中风险组HLD患病率均为100\%；核心三重特征组合（痰湿质积分$\geq 60$ + 活动量$< 40$ + 血脂异常）是重点干预目标人群的精准标志。
+
+\end{document}
